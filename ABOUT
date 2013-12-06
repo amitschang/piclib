@@ -1,0 +1,4 @@
+Libraries that support certain functionality for microchip PIC chips
+and interfaces. Includes communication modules for enc28j60 ethernet
+and mrf24j40 wireless 802.15.4 module, SPI interface and anything else
+that is generic to PIC applications (os like functionality).
