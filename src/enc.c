@@ -313,7 +313,7 @@ char enc_tx (char block){
       NOP();
     }
     // if we are blocking, return the transmission status
-    return enc_read_ethreg( (ESTAT>>1) ) & 0x01;
+    return (enc_read_ethreg(ESTAT)>>1) & 0x01;
   }
   // otherwise just return 1
   return 1;
@@ -330,12 +330,12 @@ short readphyreg (char reg){
   short res;
   enc_write_conreg( MIREGADR, reg );
   enc_write_conreg( MICMD, 0x01 );
-  // __delay_us(11); //delay ~10.24 us
   NOP();
   while ( (enc_read_macreg( MISTAT ) & 0x01) != 0 ) continue;
   enc_write_conreg( MICMD, 0x00 );
   res = enc_read_macreg( MIRDL );
-  res = res & (enc_read_macreg( MIRDH )<<8);
+  res = res << 8;
+  res = res + enc_read_macreg( MIRDH );
   return res;
 }
 
@@ -364,7 +364,7 @@ void enc_init_buffers (short start, short size){
   /* 
    start of tx buffer is just after end of recv
   */
-  CUR_INTF->tx_buff_start = end+1;
+  CUR_INTF->tx_buff_start = end+2;
 }
 
 void enc_setmacaddr (char mac[]){
@@ -386,7 +386,7 @@ void enc_init_mac (char mac[]){
   // HFRMEN    -> huge frames not filtered
   // FRMLNEN   -> frame length check
   // FULDPX    -> enable full duplex
-  enc_write_conreg( MACON3, 0b01110110 );
+  enc_write_conreg( MACON3, 0b01110111 );
   enc_write_conreg( MAMXFLL, 0xFF );
   enc_write_conreg( MAMXFLH, 0xFF );
   // NA

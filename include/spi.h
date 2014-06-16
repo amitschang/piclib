@@ -31,3 +31,5 @@ void spi_init (unsigned char mode,
 	       unsigned char cpol,
 	       unsigned char cedge);
 unsigned char spi_byte (unsigned char data);
+unsigned char spi_read();
+void spi_write(unsigned char data);

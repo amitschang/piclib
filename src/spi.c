@@ -60,11 +60,20 @@ void spi_init (unsigned char mode,
   // Ensure tristates are right
   //
   TRISSDO = 0; // data output
-  TRISSDI = 1; // data in
+  TRISSDI = 1; // data int
+#ifdef ANSELSDI
+  ANSELSDI = 0;
+#endif
+#ifdef ANSELSCK
+    ANSELSCK = 0;// clock, oddly enough, this seems to be nec. even on master
+#endif
   if ( mode == SPI_SLAVE_SS ||
        mode == SPI_SLAVE_NO_SS ){
     TRISSCK = 1; // slave gets clock from master
     TRISSS = 1;  // slave select function is input
+#ifdef ANSELSS
+    ANSELSS = 0; // digital input for slave select and
+#endif    
   }
   else {
     TRISSCK = 0;
@@ -96,3 +105,13 @@ unsigned char spi_byte (unsigned char data){
   //
   return *ACTIVE_SSPBUF;
 }
+
+unsigned char spi_read(){
+  return *ACTIVE_SSPBUF;
+}
+
+void spi_write(unsigned char data){
+  *ACTIVE_SSPBUF = data;
+}
+
+

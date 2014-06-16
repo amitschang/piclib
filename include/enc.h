@@ -41,6 +41,7 @@ void enc_flush_rx(void);
 char enc_count_rx (void);
 void enc_write_tx (char *data, short num);
 void enc_init_tx (char *dest, char *type);
+void enc_init_tx_bcast (char *type);
 char enc_tx (char block);
 void enc_init_buffers (short start, short size);
 void enc_setmacaddr (char mac[]);
