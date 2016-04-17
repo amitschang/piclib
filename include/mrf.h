@@ -1,4 +1,5 @@
 #include <xc.h>
+#include "mrf24j40.h"
 
 #define MRF_SADDR_LEN 2
 #define MRF_LADDR_LEN 8
@@ -6,6 +7,21 @@
 #define MRF_LADDR MRF_LADDR_LEN
 #define MRF_PANID_LEN 2
 #define MRF_MAX_DLEN  125 // max payload 128 - 3 (min header)
+#define MRF_SEC 0b00001000
+#define MRF_ACK 0b00100000
+#define MRF_FLIP_ADDR 0x01
+#define MRF_DATA_TYPE 1
+#define MRF_INT_RISING 1
+#define MRF_INT_FALLING 0
+#define MRF_INT_TXN  0b00000001
+#define MRF_INT_TXG1 0b00000010
+#define MRF_INT_TXG2 0b00000100
+#define MRF_INT_RX   0b00001000
+#define MRF_INT_SEC  0b00010000
+#define MRF_INT_HSYM 0b00100000
+#define MRF_INT_WAKE 0b01000000
+#define MRF_INT_SLP  0b10000000
+#define MRF_INT_ALL  0xFF;
 #define MRF_CHANNEL_11 0x03
 #define MRF_CHANNEL_12 0x13
 #define MRF_CHANNEL_13 0x23
@@ -39,6 +55,8 @@
 #define mrf_error_mode() mrf_write( MRF_RXMCR, (mrf_read(MRF_RXMCR) & 0xFC) | 0x02 )
 #define mrf_stat(stat) MRF_INTF->stat & stat
 
+
+
 typedef struct {
   char stat;
   char txstat;
@@ -57,6 +75,10 @@ typedef struct {
   char dstlen;
   char dstaddr[MRF_LADDR_LEN];
   char dstpan[MRF_PANID_LEN];
+} mrf_addr;
+
+typedef struct {
+  mrf_addr addr;
   char length;
   char type;
   char seq;
@@ -69,8 +91,7 @@ void mrf_select(mrf_intf *intf);
 void mrf_init_intf (mrf_intf *intf, volatile char *reg, char bitoffset);
 void mrf_write (short addr, char data);
 char mrf_read (short addr);
-void mrf_send (char src_alen, char dst_alen, char *dst_addr, char *dst_pid,
-	       char ack, char sec, char dlen, char *data);
+void mrf_send (mrf_addr *addr, char dlen, char *data, char flags);
 char mrf_recv (mrf_packet *packet);
 void mrf_init(char channel);
 void mrf_set_saddr (char *addr);
@@ -81,3 +102,5 @@ void mrf_release_buffer (void);
 char mrf_check (void);
 void mrf_isleep(void);
 void mrf_iwake(void);
+void mrf_rf_reset(void);
+void mrf_enable_interrupt (char intedge, char types);

@@ -15,7 +15,7 @@
 #define SPI_TX_IDLE_ACTIVE  0
 #define SPI_TX_ACTIVE_IDLE  1
 
-/* 
+/*
  Index of active spi interface
 */
 
@@ -23,8 +23,8 @@ volatile unsigned char *ACTIVE_SSPBUF  = &SSPBUF;
 volatile unsigned char *ACTIVE_SSPSTAT = &SSPSTAT;
 volatile unsigned char *ACTIVE_SSPCON1 = &SSPCON1;
 
-/* 
- Interface functions 
+/*
+ Interface functions
 */
 
 void spi_select (unsigned char iface){
@@ -73,7 +73,7 @@ void spi_init (unsigned char mode,
     TRISSS = 1;  // slave select function is input
 #ifdef ANSELSS
     ANSELSS = 0; // digital input for slave select and
-#endif    
+#endif
   }
   else {
     TRISSCK = 0;

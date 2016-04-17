@@ -9,6 +9,9 @@
 #define MRF_PANID 0
 #define MRF_PANID_LEN 2
 #define MRF_MAX_DLEN  125 // max payload 128 - 3 (min header)
+#define MRF_SEC 0b00001000
+#define MRF_ACK 0b00100000
+#define MRF_FLIP_ADDR 0x01
 
 #define mrf_set_bit(addr, bit) mrf_write( addr, mrf_read(addr) | 1<<bit )
 #define mrf_clear_bit(addr, bit) mrf_write( addr, mrf_read(addr) & ~(1<<bit) )
@@ -31,6 +34,10 @@ typedef struct {
   char dstlen;
   char dstaddr[MRF_LADDR_LEN];
   char dstpan[MRF_PANID_LEN];
+} mrf_addr;
+
+typedef struct {
+  mrf_addr addr;
   char length;
   char type;
   char seq;
@@ -56,7 +63,7 @@ static void __mrf_cs_high (void){
   *MRF_CS = *MRF_CS | (0x01<<MRF_PORT);
 }
 
-/* 
+/*
  Select the active mrf chip. Accepts the register corresponding to
  controller IO pin that is connected to the MRF chip select line and
  the bit offset of the pin itself. Must be called before
@@ -77,7 +84,7 @@ void mrf_init_intf (mrf_intf *intf, volatile char *reg, char bitoffset){
   mrf_select( intf );
 }
 
-/* 
+/*
  These are the low level read and write functions for short and long
  addresses. Usually an application will use the higher level read and
  write (and send/recv for packets) wich determine the type based on
@@ -115,7 +122,7 @@ char __mrf_laddr_read (short addr){
   return data;
 }
 
-/* 
+/*
  High level register read and write functions
 */
 void mrf_write (short addr, char data){
@@ -133,7 +140,7 @@ char mrf_read (short addr){
 }
 
 void mrf_init (char channel){
-  /* 
+  /*
    These steps are straight out of the manual. I do not know what all
    do nor what is necessary, but seem to work as non-beacon enabled
    network
@@ -151,7 +158,7 @@ void mrf_init (char channel){
     The following settings are from the recommendations in the
     datasheet, but its not clear any are necessary for normal
     operation
-    
+
    * mrf_write(MRF_RFCON6, 0x90);
    * mrf_write(MRF_RFCON7, 0x80);
    * mrf_write(MRF_RFCON8, 0x10);
@@ -160,6 +167,16 @@ void mrf_init (char channel){
    * mrf_write(MRF_TXSTBL, 0x95);
    * mrf_write(MRF_RFCON1, 0x01);
    */
+}
+
+void mrf_enable_interrupt (char intedge, char types){
+  mrf_write(MRF_INTCON, ~types);
+  if (intedge){
+    mrf_set_bit(MRF_SLPCON0, 1);
+  }
+  else {
+    mrf_clear_bit(MRF_SLPCON0, 1);
+  }
 }
 
 void mrf_set_saddr (char *addr){
@@ -213,99 +230,115 @@ char mrf_check (void){
   }
 }
 
-/* 
+/*
  Send data frame
 */
-void mrf_send (char src_alen, char dst_alen, char *dst_addr, char *dst_pid,
-	       char ack, char sec, char dlen, char *data){
+void mrf_send (mrf_addr *addr, char dlen, char *data, char flags){
   int i;
   char hlen = 3;
-  /* 
+  /*
    frame control field, start with data type frame and version >2003
   */
   short fcon = 0x1001;
-  fcon = fcon | sec<<3;
-  fcon = fcon | ack<<5;
-  /* 
-   addressing modes
+  fcon = fcon | (MRF_SEC & flags);
+  fcon = fcon | (MRF_ACK & flags);
+  /*
+   addressing modes. Set pointers to address structure, this allows us
+   to enable flipping of the address information (e.g. In replying
+   this would be a very common operation, especially when we have
+   unicast filter set)
   */
-  if (dst_alen != 0){
-    __mrf_laddr_write(0x002+hlen, dst_pid[0]);
-    __mrf_laddr_write(0x002+hlen+1, dst_pid[1]);
+  char _srclen, _dstlen;
+  char *_srcpan, *_dstpan, *_srcaddr, *_dstaddr;
+  if (MRF_FLIP_ADDR & flags){
+    _srclen = addr->dstlen;
+    _srcpan = addr->dstpan;
+    _srcaddr = addr->dstaddr;
+    _dstlen = addr->srclen;
+    _dstpan = addr->srcpan;
+    _dstaddr = addr->srcaddr;
+  }
+  else {
+    _srclen = addr->srclen;
+    _srcpan = addr->srcpan;
+    _srcaddr = addr->srcaddr;
+    _dstlen = addr->dstlen;
+    _dstpan = addr->dstpan;
+    _dstaddr = addr->dstaddr;
+  }
+  /*
+   Now actually set the address information in the transmit buffer
+  */
+  if (_dstlen != 0){
+    __mrf_laddr_write(0x002+hlen, _dstpan[0]);
+    __mrf_laddr_write(0x002+hlen+1, _dstpan[1]);
     hlen+=2;
-  }
-  if (dst_alen == MRF_SADDR_LEN){
-    for (i=0;i<MRF_SADDR_LEN;i++){
-      __mrf_laddr_write(0x002+hlen+i, dst_addr[i]);
+    for (i=0;i<_dstlen;i++){
+      __mrf_laddr_write(0x002+hlen+i, _dstaddr[i]);
     }
-    fcon = fcon | 0x0800;
+    hlen+=_dstlen;
+    if (_dstlen == MRF_SADDR_LEN){
+      fcon = fcon | 0x0800;
+    }
+    else {
+      fcon = fcon | 0x0C00;
+    }
+  }
+
+  if (_srclen != 0){
+    __mrf_laddr_write(0x002+hlen, _srcpan[0]);
+    __mrf_laddr_write(0x002+hlen+1, _srcpan[1]);
     hlen+=2;
-  }
-  else if (dst_alen == MRF_LADDR_LEN){
-    for (i=0;i<MRF_LADDR_LEN;i++){
-      __mrf_laddr_write(0x002+hlen+i, dst_addr[i]);
+    for (i=0;i<_srclen;i++){
+      __mrf_laddr_write(0x002+hlen+i, _srcaddr[i]);
     }
-    fcon = fcon | 0x0C00;
-    hlen+=8;
-  }
-  if (src_alen != 0){
-    __mrf_laddr_write(0x002+hlen, MRF_INTF->intf_panid[0]);
-    __mrf_laddr_write(0x002+hlen+1, MRF_INTF->intf_panid[1]);
-    hlen+=2;
-  }
-  if (src_alen == MRF_SADDR_LEN){
-    for (i=0;i<MRF_SADDR_LEN;i++){
-      __mrf_laddr_write(0x002+hlen+i, MRF_INTF->intf_saddr[i]);
+    hlen+=_srclen;
+    if (_srclen == MRF_SADDR_LEN){
+      fcon = fcon | 0x8000;
     }
-    fcon = fcon | 0x8000;
-    hlen+=2;
-  }
-  else if (src_alen == MRF_LADDR_LEN){
-    for (i=0;i<MRF_LADDR_LEN;i++){
-      __mrf_laddr_write(0x002+hlen+i, MRF_INTF->intf_laddr[i]);
+    else {
+      fcon = fcon | 0xC000;
     }
-    fcon = fcon | 0xC000;
-    hlen+=8;
   }
-  /* 
+  /*
    now we can write the header length and frame control
   */
   __mrf_laddr_write(0x000, hlen);
   __mrf_laddr_write(0x002, fcon);
   __mrf_laddr_write(0x003, fcon>>8);
   __mrf_laddr_write(0x004, MRF_INTF->seq++); //seq
-  /* 
+  /*
    write dlen and data
   */
   __mrf_laddr_write(0x001, dlen+hlen);
   for (i=0; i<dlen; i++){
       __mrf_laddr_write(0x002+hlen+i, data[i]);
   }
-  /* 
+  /*
    Set appropriate ack and sec flags
   */
-  if (ack)
+  if (MRF_ACK & flags)
     mrf_write(MRF_TXNCON, mrf_read(MRF_TXNCON) | 0b00000100);
-    
-  /* 
+
+  /*
    now transmit by setting TXNCON 0x1B
   */
   mrf_write(0x1B, mrf_read(0x1B) | 0x01);
 }
 
 char mrf_recv (mrf_packet *packet){
-  /* 
+  /*
    prevent any overwriting of received packets
   */
   mrf_set_bit(MRF_BBREG1, 2);
-  /* 
+  /*
    Find length of entire packet plus FCS
   */
   char i;
   short idx = 0x300;
   char len = __mrf_laddr_read( idx++ );
 
-  /* 
+  /*
    read in the frame control and header
   */
   short fcon = __mrf_laddr_read( idx++ );
@@ -320,51 +353,55 @@ char mrf_recv (mrf_packet *packet){
     and long
    */
   if ((fcon & 0x0C00) != 0x0000){
-    packet->dstpan[0] = __mrf_laddr_read( idx++ );
-    packet->dstpan[1] = __mrf_laddr_read( idx++ );
+    (packet->addr).dstpan[0] = __mrf_laddr_read( idx++ );
+    (packet->addr).dstpan[1] = __mrf_laddr_read( idx++ );
     if ((fcon & 0x0C00) == 0x0C00){
-      for (i=0;i<MRF_LADDR_LEN;i++)
-	packet->dstaddr[i] = __mrf_laddr_read( idx++ );
-      packet->dstlen = MRF_LADDR_LEN;
+      for (i=0;i<MRF_LADDR_LEN;i++){
+	(packet->addr).dstaddr[i] = __mrf_laddr_read( idx++ );
+      }
+      (packet->addr).dstlen = MRF_LADDR_LEN;
     }
     else if ((fcon & 0x0C00) == 0x0800){
-      for (i=0;i<MRF_SADDR_LEN;i++)
-	packet->dstaddr[i] = __mrf_laddr_read( idx++ );
-      packet->dstlen = MRF_SADDR_LEN;
+      for (i=0;i<MRF_SADDR_LEN;i++){
+	(packet->addr).dstaddr[i] = __mrf_laddr_read( idx++ );
+      }
+      (packet->addr).dstlen = MRF_SADDR_LEN;
     }
   }
   else {
-    packet->dstlen = 0;
+    (packet->addr).dstlen = 0;
   }
   // src as dest
   if ((fcon & 0xC000) != 0x0000){
-    packet->srcpan[0] = __mrf_laddr_read( idx++ );
-    packet->srcpan[1] = __mrf_laddr_read( idx++ );
+    (packet->addr).srcpan[0] = __mrf_laddr_read( idx++ );
+    (packet->addr).srcpan[1] = __mrf_laddr_read( idx++ );
     if ((fcon & 0xC000) == 0xC000){
-      for (i=0;i<MRF_LADDR_LEN;i++)
-	packet->srcaddr[i] = __mrf_laddr_read( idx++ );
-      packet->srclen = MRF_LADDR_LEN;
+      for (i=0;i<MRF_LADDR_LEN;i++){
+	(packet->addr).srcaddr[i] = __mrf_laddr_read( idx++ );
+      }
+      (packet->addr).srclen = MRF_LADDR_LEN;
     }
     else if ((fcon & 0xC000) == 0x8000){
-      for (i=0;i<MRF_SADDR_LEN;i++)
-	packet->srcaddr[i] = __mrf_laddr_read( idx++ );
-      packet->srclen = MRF_SADDR_LEN;
+      for (i=0;i<MRF_SADDR_LEN;i++){
+	(packet->addr).srcaddr[i] = __mrf_laddr_read( idx++ );
+      }
+      (packet->addr).srclen = MRF_SADDR_LEN;
     }
   }
   else {
-    packet->srclen = 0;
+    (packet->addr).srclen = 0;
   }
-  /* 
+  /*
    read the data until length minus 2, which includes FCS. First store
    the length of the data component (which is total length minus the
    header minus 2
   */
   packet->length = len - (idx-0x300) - 1;
-  
+
   for (i=0;i<packet->length;i++)
     packet->data[i] = __mrf_laddr_read( idx++ );
 
-  /* 
+  /*
    Store the Link quality indicator. 0 means very poor link quality
    and 1 means very high.
   */
@@ -392,12 +429,12 @@ void mrf_iwake (void){
   /*
    Wake the module up from instant sleep
   */
-  int i=100000;
-  mrf_write(MRF_WAKECON,0x40);
-  while (i-- > 0){
-    NOP();
-  }
+
+  mrf_write(MRF_WAKECON,0xC0);
   mrf_write(MRF_WAKECON,0x00);
+}
+
+void mrf_rf_reset(void){
   mrf_write(MRF_RFCTL, 0x04);
   mrf_write(MRF_RFCTL, 0x00);
 }

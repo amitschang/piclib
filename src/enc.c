@@ -21,7 +21,7 @@
 #define ENC_FILTER_MAGIC  0b00001000
 #define ENC_FILTER_HASH   0b00000100
 
-/* 
+/*
  this structure type describes a single interface (i.e. an ENC84J60
  chip) connected to our SPI bus. Any number are allowed, each
  referenced by an invocation of this struct. Only one is active at a
@@ -29,15 +29,7 @@
  only one
 */
 typedef struct {
-  /* 
-   The "current" packet header fields and length make up the
-   "public" part of this structure
-  */
-  char src_hwaddr[6];
-  char dst_hwaddr[6];
-  char type[2];
-  short length;
-  /* 
+  /*
     The rest are internal state machine variables for this particular
     interface
   */
@@ -46,13 +38,21 @@ typedef struct {
   short tx_buff_start;
   char curbank;
   char *mac_addr;
-  /* 
+  /*
    Where this interface can be found physically, Chip Select line
   */
   volatile unsigned char *enc_cs;
   char enc_port;
   // end
 } enc_intf;
+
+typedef struct {
+  char src_hwaddr[6];
+  char dst_hwaddr[6];
+  char type[2];
+  short length;
+} enc_packet;
+
 
 static enc_intf *CUR_INTF;
 static volatile unsigned char *CUR_CS;
@@ -62,7 +62,7 @@ void enc_spi_init (void){
   spi_init(SPI_MASTER_FOSC_4, SPI_CLOCK_IDLE_LOW, SPI_TX_ACTIVE_IDLE);
 }
 
-/* 
+/*
  Helper functions that do the slave select for SPI transactions
 */
 void __enc_cs_low (void){
@@ -81,7 +81,7 @@ void enc_select_intf (enc_intf *intf){
 }
 
 void enc_init_intf (enc_intf *intf, volatile char *reg, char bitoffset){
-  /* 
+  /*
    Initialize an interface. Takes a reference to the interface
    structure to be initialized and the LATCH and bit offset of the
    chip select pin for it
@@ -92,11 +92,11 @@ void enc_init_intf (enc_intf *intf, volatile char *reg, char bitoffset){
   enc_select_intf( intf );
 }
 
-/* 
+/*
  Register reading and writing functions
 */
 static void enc_banksel (short reg){
-  /* 
+  /*
    Select the bank of the register specified. From the include file
    the register is written at the 8th bit. The ECON1 register on the
    ENC chip hols the bank select reg
@@ -105,7 +105,7 @@ static void enc_banksel (short reg){
   spi_byte( RCR | ECON1 );
   char econ = spi_byte( 0x00 );
   __enc_cs_high();
-  /* 
+  /*
    The bank is the least significant two bits of ECON1, so preserve
    the other bits and write only the bank
   */
@@ -114,7 +114,7 @@ static void enc_banksel (short reg){
   spi_byte( WCR | ECON1 );
   spi_byte( econ );
   __enc_cs_high();
-  /* 
+  /*
    Set the current bank to avoid duplicating this communication when
    we already have it selected
   */
@@ -122,7 +122,7 @@ static void enc_banksel (short reg){
 }
 
 void enc_write_conreg (short reg, char data){
-  /* 
+  /*
    Write data to a control register, selecting the appropriate bank if
    necessary
   */
@@ -136,7 +136,7 @@ void enc_write_conreg (short reg, char data){
 }
 
 char enc_read_ethreg (short reg){
-  /* 
+  /*
    Read the value of an eth register, which is one byte in
    length. These are the registers named E*
   */
@@ -151,7 +151,7 @@ char enc_read_ethreg (short reg){
 }
 
 char enc_read_macreg (short reg){
-  /* 
+  /*
    Read a mac register, which is one byte in length. The mac registers
    are those named M*
   */
@@ -166,12 +166,12 @@ char enc_read_macreg (short reg){
   return data;
 }
 
-/* 
+/*
  Functions for reading from the recieve buffer
 */
 
 void readrecvbuffer (char *out, short num){
-  /* 
+  /*
    This function does the actual reading of the buffer, but does not
    check if the number of bytes is appropriate
   */
@@ -185,11 +185,18 @@ void readrecvbuffer (char *out, short num){
   __enc_cs_high();
 }
 
+void enc_enable_interrupt (char types){
+  /* first clear the flags */
+  enc_write_conreg(EIR, 0x00);
+  /* now enable all types interrupts and global enable */
+  enc_write_conreg(EIE, 0x80 | types);
+}
+
 char enc_count_rx (void){
   return enc_read_ethreg( EPKTCNT );
 }
 
-short enc_init_rx (void){
+short enc_init_rx (enc_packet *pckt){
   unsigned int status;
   short len;
   if (0==enc_count_rx())
@@ -197,17 +204,17 @@ short enc_init_rx (void){
   readrecvbuffer( (char *)&(CUR_INTF->next_packet_loc), 2 );
   readrecvbuffer( (char *)&len, 2);
   readrecvbuffer( (char *)&status, 2 );
-  readrecvbuffer( &(CUR_INTF->dst_hwaddr), 6);
-  readrecvbuffer( &(CUR_INTF->src_hwaddr), 6);
-  readrecvbuffer( &(CUR_INTF->type), 2);
+  readrecvbuffer( pckt->dst_hwaddr, 6);
+  readrecvbuffer( pckt->src_hwaddr, 6);
+  readrecvbuffer( pckt->type, 2);
   len -= 18;
-  CUR_INTF->length = len;
+  pckt->length = len;
   CUR_INTF->cur_packet_depth = len;
   return len;
 }
 
 short enc_read_rx (char *out, short num){
-  /* 
+  /*
    only allow to read up to the next packet like this, then must read
    the new header in
   */
@@ -220,7 +227,7 @@ short enc_read_rx (char *out, short num){
 }
 
 void enc_flush_rx(void){
-  /* 
+  /*
    Flush the recieve buffer to advance to the next packet pending and
    allow space to be used by incoming packets. This function must be
    used after completely reading any packet, and cannot be used until
@@ -230,19 +237,19 @@ void enc_flush_rx(void){
   */
   enc_write_conreg( ERDPTL, (char)(CUR_INTF->next_packet_loc) );
   enc_write_conreg( ERDPTH, (char)((CUR_INTF->next_packet_loc)>>8) );
-  /* 
+  /*
    Also move the buffer write position pointer so that new data can
    take its place in the buffer
   */
   enc_write_conreg( ERXRDPTL, (char)(CUR_INTF->next_packet_loc) );
   enc_write_conreg( ERXRDPTH, (char)((CUR_INTF->next_packet_loc)>>8) );
-  /* 
+  /*
    Decrement the pending packet counter
   */
   enc_write_conreg( ECON2, enc_read_ethreg( ECON2 ) | 0b01000000 );
 }
 
-/* 
+/*
  Transmission functions
 */
 
@@ -257,35 +264,39 @@ void enc_write_tx (char *data, short num){
   __enc_cs_high();
 }
 
-void enc_init_tx (char *dest, char *type){
-  /* 
+void enc_init_tx_from (char *src, char *dest, char *type){
+  /*
    Initialize a transmission. The transmission buffer works a single
-   packet at a time, starting from the beginning each time 
-   
+   packet at a time, starting from the beginning each time
+
    First check to make sure a transmission is not pending, don't want
    to overwrite data.
   */
   while ( 0 != (enc_read_ethreg( ECON1 ) & 0b00001000) ){
     NOP();
   }
-  /* 
+  /*
    Start writing at beginning of transmist space
   */
   enc_write_conreg( EWRPTL, (char)(CUR_INTF->tx_buff_start) );
   enc_write_conreg( EWRPTH, (char)(CUR_INTF->tx_buff_start>>8) );
-  /* 
+  /*
    Set the packet transmit start pointers to the same value
   */
   enc_write_conreg( ETXSTL, (char)(CUR_INTF->tx_buff_start) );
   enc_write_conreg( ETXSTH, (char)(CUR_INTF->tx_buff_start>>8) );
-  /* 
+  /*
    write in packet headers, including the per packet control byte,
    which in this case is no overrides
   */
   enc_write_tx( 0x00, 1 ); // per packet control byte
   enc_write_tx( dest, 6 );
-  enc_write_tx( CUR_INTF->mac_addr, 6 );
+  enc_write_tx( src, 6 );
   enc_write_tx( type, 2 );
+}
+
+void enc_init_tx (char *dest, char *type){
+  enc_init_tx_from(CUR_INTF->mac_addr, dest, type);
 }
 
 void enc_init_tx_bcast (char *type){
@@ -294,8 +305,8 @@ void enc_init_tx_bcast (char *type){
 }
 
 char enc_tx (char block){
-  /* 
-   Transmit the packet. The block argument, if 1, blocks until the 
+  /*
+   Transmit the packet. The block argument, if 1, blocks until the
    transmission is complete, and returns the status of transmission
 
   */
@@ -340,28 +351,28 @@ short readphyreg (char reg){
 }
 
 void enc_init_buffers (short start, short size){
-  /* 
+  /*
    initialize the transmit and receive buffers. It takes the start and
    size of the recv buffer to create as arguments. The transmit buffer
    is the remaining
   */
   short end = start+size;
-  /* 
+  /*
    Write low and high bytes of the start pointer
   */
   enc_write_conreg( ERXSTL, (char)start );
   enc_write_conreg( ERXSTH, (char)(start>>8) );
-  /* 
+  /*
    Set the recv buffer write pointer to the start of buffer
   */
   enc_write_conreg( ERDPTL, 0 );
   enc_write_conreg( ERDPTH, 0 );
-  /* 
-   Write low and high bytes of the end pointer 
+  /*
+   Write low and high bytes of the end pointer
   */
   enc_write_conreg( ERXNDL, (char)end );
   enc_write_conreg( ERXNDH, (char)(end>>8) );
-  /* 
+  /*
    start of tx buffer is just after end of recv
   */
   CUR_INTF->tx_buff_start = end+2;
@@ -376,37 +387,43 @@ void enc_setmacaddr (char mac[]){
   enc_write_conreg( MAADR6, mac[5] );
 }
 
-void enc_init_mac (char mac[]){
-  // enable mac, set TXPAUS and RXPAUS, no PASSALL
+void enc_init_mac_hdpx (char mac[]){
+  // enable mac recv
   enc_write_conreg( MACON1, 0b00000001 );
-  // padcfg and duplex.
-  // PADCFG[3] -> short padded to 64 and CRC
-  // TXCRCEN   -> add CRC
-  // PHDREN    -> no proprietary header
-  // HFRMEN    -> huge frames not filtered
-  // FRMLNEN   -> frame length check
-  // FULDPX    -> enable full duplex
-  enc_write_conreg( MACON3, 0b01110111 );
-  enc_write_conreg( MAMXFLL, 0xFF );
-  enc_write_conreg( MAMXFLH, 0xFF );
-  // NA
-  // DEFER   -> IEEE 802.3 compiance
-  // BPEN    -> wait after collision
-  // NOBKOFF -> delay
-  // NA
-  // NA
-  // NA
-  // NA
-  enc_write_conreg( MACON4, 0b01000000 );
+  /*
+    Half duplex mode, do zero padding, no proprietary header and do
+    append a crc to transmission. Ensure the PHY register matches
+    duplex
+  */
+  enc_write_conreg( MACON3, 0b01110110 );
+  writephyreg(0x00, 0x0000); // PHCON1
+  // loopback disable (most of the time dont want this)
+  writephyreg(0x10, 0x0100); // PHCON2
   // back to back interpacket gap
   // for half duplex, recommended 12h (9.6 us)
   enc_write_conreg( MABBIPG, 0x12 );
-  // step 6
+  // recommended non-back to back values for half duplex
   enc_write_conreg( MAIPGL, 0x12 );
-  // step 7
   enc_write_conreg( MAIPGH, 0x0C );
-  // step 8
-  // no change
+  enc_setmacaddr(mac);
+  CUR_INTF->mac_addr = mac;
+}
+
+void enc_init_mac_fdpx (char mac[]){
+  // enable mac recv, set TXPAUS and RXPAUS, no PASSALL
+  enc_write_conreg( MACON1, 0b00001101 );
+  /*
+    full duplex mode, do zero padding, no proprietary header and do
+    append a crc to transmission. Ensure the PHY register matches
+    duplex setting
+  */
+  enc_write_conreg( MACON3, 0b01110111 );
+  writephyreg(0x00, 0x0100); // PHCON1
+  // back to back interpacket gap
+  // for fill duplex, recommended 15h (9.6 us)
+  enc_write_conreg( MABBIPG, 0x15 );
+  // recommended non-back to back values
+  enc_write_conreg( MAIPGL, 0x12 );
   enc_setmacaddr(mac);
   CUR_INTF->mac_addr = mac;
 }
@@ -416,8 +433,14 @@ void enc_enable_recv (void){
   enc_write_conreg( ECON1, econ | 0b00000100 );
 }
 
+void enc_init_hdpx (char mac[], short rbuffsize){
+  enc_init_mac_hdpx(mac);
+  enc_init_buffers( 0, rbuffsize );
+  enc_enable_recv();
+}
+
 void enc_init (char mac[], short rbuffsize){
-  enc_init_mac(mac);
+  enc_init_mac_fdpx(mac);
   enc_init_buffers( 0, rbuffsize );
   enc_enable_recv();
 }

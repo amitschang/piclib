@@ -10,8 +10,8 @@
 #define SPI_TX_IDLE_ACTIVE  0
 #define SPI_TX_ACTIVE_IDLE  1
 
-/* 
- The following defines work for pic16f1826/27. Need to figure out 
+/*
+ The following defines work for pic16f1826/27. Need to figure out
  how the chip is passed in xc.h
 */
 
@@ -20,8 +20,8 @@
 #define TRISSCK TRISB4
 #define TRISSS  TRISA5
 
-/* 
- Interface functions 
+/*
+ Interface functions
 */
 
 void spi_select (unsigned char iface);

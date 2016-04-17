@@ -1,4 +1,4 @@
-/* 
+/*
  Ports used for SPI functions in various chips
 */
 
